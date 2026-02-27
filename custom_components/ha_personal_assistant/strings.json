@@ -1,0 +1,78 @@
+{
+    "config": {
+        "step": {
+            "user": {
+                "title": "Ollama Configuration",
+                "description": "Configure the connection to your local Ollama server.",
+                "data": {
+                    "ollama_url": "Ollama Server URL",
+                    "ollama_model": "Ollama Model",
+                    "ollama_embedding_model": "Embedding Model"
+                }
+            },
+            "cloud_llm": {
+                "title": "Cloud LLM (Optional)",
+                "description": "Optionally configure a cloud LLM provider as a fallback. ⚠️ Using cloud LLMs sends conversation data to external servers.",
+                "data": {
+                    "cloud_llm_provider": "Cloud LLM Provider",
+                    "cloud_llm_api_key": "API Key",
+                    "cloud_llm_model": "Model Name",
+                    "cloud_llm_send_profile": "Send profile data to cloud LLM",
+                    "cloud_llm_send_ha_state": "Send HA state to cloud LLM"
+                }
+            },
+            "persona": {
+                "title": "Agent Persona",
+                "description": "Configure the assistant's personality and behavior.",
+                "data": {
+                    "agent_persona": "Agent Persona / System Prompt",
+                    "session_timeout_minutes": "Session Timeout (minutes)",
+                    "context_budget": "Context Token Budget",
+                    "blocked_keywords": "PII Blocked Keywords (comma-separated)"
+                }
+            },
+            "action_policy": {
+                "title": "Action Policy",
+                "description": "Configure which Home Assistant domains the agent can control.",
+                "data": {
+                    "allowed_domains": "Allowed Domains (* for all)",
+                    "restricted_domains": "Restricted Domains (comma-separated, require confirmation)",
+                    "blocked_domains": "Blocked Domains (comma-separated, never callable)",
+                    "require_confirmation_services": "Services Requiring Confirmation (comma-separated)"
+                }
+            },
+            "influxdb": {
+                "title": "InfluxDB (Optional)",
+                "description": "Configure InfluxDB for event-driven behavior learning. Leave empty to skip.",
+                "data": {
+                    "influxdb_url": "InfluxDB URL",
+                    "influxdb_token": "InfluxDB Token",
+                    "influxdb_org": "InfluxDB Organization",
+                    "influxdb_bucket": "InfluxDB Bucket"
+                }
+            }
+        },
+        "error": {
+            "cannot_connect_ollama": "Cannot connect to Ollama server. Please check the URL."
+        }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "title": "Personal Assistant Options",
+                "description": "Adjust the Personal Assistant configuration.",
+                "data": {
+                    "ollama_url": "Ollama Server URL",
+                    "ollama_model": "Ollama Model",
+                    "agent_persona": "Agent Persona",
+                    "session_timeout_minutes": "Session Timeout (minutes)",
+                    "context_budget": "Context Token Budget",
+                    "restricted_domains": "Restricted Domains (comma-separated)",
+                    "blocked_domains": "Blocked Domains (comma-separated)",
+                    "require_confirmation_services": "Confirmation Services (comma-separated)",
+                    "blocked_keywords": "PII Blocked Keywords (comma-separated)"
+                }
+            }
+        }
+    }
+}

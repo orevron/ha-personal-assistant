@@ -1,0 +1,18 @@
+{
+  "domain": "ha_personal_assistant",
+  "name": "Personal Assistant",
+  "version": "0.1.0",
+  "documentation": "https://github.com/YOUR_USER/ha-personal-assistant",
+  "dependencies": ["telegram_bot"],
+  "requirements": [
+    "langchain>=0.3",
+    "langchain-ollama>=0.3",
+    "langgraph>=0.3",
+    "sqlite-vec>=0.1",
+    "sqlalchemy>=2.0",
+    "duckduckgo-search>=6.0"
+  ],
+  "codeowners": [],
+  "config_flow": true,
+  "iot_class": "local_push"
+}

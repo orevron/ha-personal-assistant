@@ -1,0 +1,28 @@
+# Services exposed by the Personal Assistant integration
+reindex:
+  name: Reindex RAG
+  description: Trigger an immediate re-index of all RAG sources (entities, automations, scenes, history, profile).
+
+clear_profile:
+  name: Clear Profile
+  description: Clear all learned profile entries for a specific category or all categories.
+  fields:
+    category:
+      name: Category
+      description: The profile category to clear. Leave empty to clear all.
+      required: false
+      example: "preference"
+      selector:
+        text:
+
+clear_conversation_history:
+  name: Clear Conversation History
+  description: Clear all conversation history for a specific chat or all chats.
+  fields:
+    chat_id:
+      name: Chat ID
+      description: The Telegram chat ID to clear history for. Leave empty to clear all.
+      required: false
+      example: "123456789"
+      selector:
+        text:
