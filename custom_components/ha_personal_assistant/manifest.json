@@ -1,9 +1,11 @@
 {
   "domain": "ha_personal_assistant",
   "name": "Personal Assistant",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "documentation": "https://github.com/YOUR_USER/ha-personal-assistant",
-  "dependencies": ["telegram_bot"],
+  "dependencies": [
+    "telegram_bot"
+  ],
   "requirements": [
     "langchain>=0.3",
     "langchain-ollama>=0.3",
