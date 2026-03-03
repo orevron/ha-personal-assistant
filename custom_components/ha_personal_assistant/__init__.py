@@ -45,12 +45,6 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# Dedicated thread pool — never blocks HA's default executor
-_AGENT_POOL = ThreadPoolExecutor(
-    max_workers=AGENT_POOL_MAX_WORKERS,
-    thread_name_prefix=AGENT_POOL_THREAD_PREFIX,
-)
-
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Personal Assistant from a config entry."""
@@ -67,6 +61,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     data_dir = hass.config.path(DATA_DIR)
     os.makedirs(data_dir, exist_ok=True)
     db_path = os.path.join(data_dir, DB_FILENAME)
+
+    # Dedicated thread pool — created per setup so reloads get a fresh executor
+    agent_pool = ThreadPoolExecutor(
+        max_workers=AGENT_POOL_MAX_WORKERS,
+        thread_name_prefix=AGENT_POOL_THREAD_PREFIX,
+    )
 
     # Initialize components
     _LOGGER.info("Setting up Personal Assistant integration")
@@ -95,11 +95,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     from .memory.conversation_memory import ConversationMemory
     from .memory.learning_worker import LearningWorker
 
-    engine = await async_setup_database(db_path, _AGENT_POOL)
-    profile_manager = ProfileManager(engine, _AGENT_POOL)
+    engine = await async_setup_database(db_path, agent_pool)
+    profile_manager = ProfileManager(engine, agent_pool)
     session_timeout = config.get(CONF_SESSION_TIMEOUT_MINUTES, DEFAULT_SESSION_TIMEOUT_MINUTES)
-    conversation_memory = ConversationMemory(engine, _AGENT_POOL, session_timeout)
-    learning_worker = LearningWorker(engine, llm_router, profile_manager, _AGENT_POOL)
+    conversation_memory = ConversationMemory(engine, agent_pool, session_timeout)
+    learning_worker = LearningWorker(engine, llm_router, profile_manager, agent_pool)
 
     # Initialize RAG (Phase 2)
     from .rag.engine import RAGEngine
@@ -109,7 +109,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     ollama_url = config.get(CONF_OLLAMA_URL, DEFAULT_OLLAMA_URL)
     embedding_model = config.get(CONF_OLLAMA_EMBEDDING_MODEL, DEFAULT_OLLAMA_EMBEDDING_MODEL)
     embeddings = OllamaEmbeddings(base_url=ollama_url, model=embedding_model)
-    rag_engine = RAGEngine(db_path, embeddings, _AGENT_POOL)
+    rag_engine = RAGEngine(db_path, embeddings, agent_pool)
     await rag_engine.async_setup()
     rag_indexer = RAGIndexer(hass, rag_engine, embeddings, profile_manager)
 
@@ -126,7 +126,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Create all tools
     ha_tools = create_ha_tools(hass, action_policy)
     profile_tools = create_profile_tools(profile_manager)
-    web_search_tools = create_web_search_tools(pii_sanitizer, content_firewall, engine, _AGENT_POOL)
+    web_search_tools = create_web_search_tools(pii_sanitizer, content_firewall, engine, agent_pool)
     rag_tools = create_rag_tools(rag_engine, content_firewall)
 
     all_tools = ha_tools + profile_tools + web_search_tools + rag_tools
@@ -247,7 +247,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if command == "/searchlog":
             try:
                 from .tools.web_search import get_recent_search_log
-                log_entries = await get_recent_search_log(engine, _AGENT_POOL, limit=10)
+                log_entries = await get_recent_search_log(engine, agent_pool, limit=10)
                 if log_entries:
                     lines = ["📋 *Recent Search Log:*\n"]
                     for entry in log_entries:
@@ -312,13 +312,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # 10. Event-driven learner setup (Phase 5)
     from .memory.event_learner import EventLearner
-    event_learner = EventLearner(hass, config, profile_manager, llm_router, _AGENT_POOL)
+    event_learner = EventLearner(hass, config, profile_manager, llm_router, agent_pool)
     await event_learner.async_setup()
 
     # Store references for unload
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = {
         "agent": agent,
+        "agent_pool": agent_pool,
         "llm_router": llm_router,
         "profile_manager": profile_manager,
         "conversation_memory": conversation_memory,
@@ -362,7 +363,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await event_learner.async_stop()
 
     # Shutdown thread pool
-    _AGENT_POOL.shutdown(wait=False)
+    agent_pool = data.get("agent_pool")
+    if agent_pool:
+        agent_pool.shutdown(wait=False)
 
     _LOGGER.info("Personal Assistant integration unloaded")
     return True
