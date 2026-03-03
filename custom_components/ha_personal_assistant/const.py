@@ -1,7 +1,7 @@
 """Constants for the Home Assistant Personal Assistant integration."""
 
 DOMAIN = "ha_personal_assistant"
-PLATFORMS = []
+PLATFORMS = ["sensor", "button"]
 
 # Config keys
 CONF_OLLAMA_URL = "ollama_url"

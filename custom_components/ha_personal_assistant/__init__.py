@@ -18,6 +18,7 @@ from homeassistant.helpers.event import async_track_time_interval
 
 from .const import (
     DOMAIN,
+    PLATFORMS,
     DATA_DIR,
     DB_FILENAME,
     CONF_OLLAMA_URL,
@@ -146,6 +147,53 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Pending confirmations: chat_id -> asyncio.Event
     pending_confirmations: dict[int, dict[str, Any]] = {}
 
+    # 5b. Activity Log Coordinator — drives the sensor entities
+    from .sensor import ActivityLogCoordinator
+    coordinator = ActivityLogCoordinator()
+
+    # Bootstrap coordinator from existing DB data
+    async def _bootstrap_coordinator() -> None:
+        from sqlalchemy import func as sa_func, cast, Date
+        from .memory.models import InteractionLog
+        from sqlalchemy.orm import sessionmaker
+        loop = asyncio.get_event_loop()
+        Session = sessionmaker(bind=engine)
+
+        def _query():
+            s = Session()
+            try:
+                total = s.query(sa_func.count(InteractionLog.id)).scalar() or 0
+                from datetime import date
+                today = date.today()
+                today_count = (
+                    s.query(sa_func.count(InteractionLog.id))
+                    .filter(cast(InteractionLog.timestamp, Date) == today)
+                    .scalar()
+                ) or 0
+                last = (
+                    s.query(InteractionLog)
+                    .order_by(InteractionLog.id.desc())
+                    .first()
+                )
+                last_row = None
+                if last:
+                    last_row = {
+                        "user_message": last.user_message,
+                        "assistant_response": last.assistant_response,
+                        "chat_id": last.chat_id,
+                        "session_id": last.session_id,
+                        "timestamp": str(last.timestamp) if last.timestamp else None,
+                        "tools_used": last.tools_used,
+                    }
+                return total, today_count, last_row
+            finally:
+                s.close()
+
+        total, today_count, last_row = await loop.run_in_executor(agent_pool, _query)
+        coordinator.load_from_db(total, today_count, last_row)
+
+    await _bootstrap_coordinator()
+
     # 6. Telegram event listeners
     async def handle_telegram_text(event: Event) -> None:
         """Handle incoming Telegram text messages."""
@@ -158,6 +206,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         _LOGGER.debug("Received Telegram message from %s (chat %s): %s", user_name, chat_id, text[:50])
 
+        coordinator.set_status("processing")
         try:
             # Get or create conversation session
             session = await conversation_memory.get_or_create_session(chat_id)
@@ -190,6 +239,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 assistant_response=response,
             )
 
+            # Update activity log sensors
+            coordinator.record_interaction(
+                user_message=text,
+                response=response,
+                chat_id=chat_id,
+                session_id=session["id"],
+            )
+
             # Check if agent was interrupted for confirmation
             state = await agent._graph.aget_state(
                 {"configurable": {"thread_id": str(chat_id)}}
@@ -212,6 +269,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         except Exception as err:
             _LOGGER.error("Error processing message: %s", err, exc_info=True)
+            coordinator.set_status("error", str(err))
             await _send_telegram_message(
                 hass, chat_id, "Sorry, I encountered an error processing your message."
             )
@@ -286,11 +344,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Initial RAG index on startup
     hass.async_create_task(_reindex_rag())
 
-    # 8. Register sync button entity
-    from .button import async_setup_sync_button
-    await async_setup_sync_button(hass, entry, rag_indexer)
-
-    # 9. Register HA services
+    # 8. Register HA services
     async def handle_reindex_service(call) -> None:
         """Handle reindex service call."""
         await _reindex_rag()
@@ -310,12 +364,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.services.async_register(DOMAIN, "clear_profile", handle_clear_profile_service)
     hass.services.async_register(DOMAIN, "clear_conversation_history", handle_clear_history_service)
 
-    # 10. Event-driven learner setup (Phase 5)
+    # 9. Event-driven learner setup (Phase 5)
     from .memory.event_learner import EventLearner
     event_learner = EventLearner(hass, config, profile_manager, llm_router, agent_pool)
     await event_learner.async_setup()
 
-    # Store references for unload
+    # Store references for unload (coordinator + rag_indexer needed by platform entities)
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = {
         "agent": agent,
@@ -327,11 +381,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "rag_engine": rag_engine,
         "rag_indexer": rag_indexer,
         "event_learner": event_learner,
+        "coordinator": coordinator,
         "unsub_text": unsub_text,
         "unsub_callback": unsub_callback,
         "unsub_command": unsub_command,
         "unsub_reindex": unsub_reindex,
     }
+
+    # 10. Forward entity platforms (sensor, button)
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     _LOGGER.info("Personal Assistant integration setup complete")
     return True
@@ -339,6 +397,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
+    # Unload entity platforms first
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if not unload_ok:
+        return False
+
     data = hass.data[DOMAIN].pop(entry.entry_id, {})
 
     # Unsubscribe event listeners

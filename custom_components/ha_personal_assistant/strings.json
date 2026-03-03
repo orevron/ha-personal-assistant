@@ -74,5 +74,29 @@
                 }
             }
         }
+    },
+    "entity": {
+        "sensor": {
+            "last_interaction": {
+                "name": "Last Interaction"
+            },
+            "total_interactions": {
+                "name": "Total Interactions"
+            },
+            "last_user_message": {
+                "name": "Last User Message"
+            },
+            "last_response": {
+                "name": "Last Response"
+            },
+            "status": {
+                "name": "Status"
+            }
+        },
+        "button": {
+            "sync_now": {
+                "name": "Sync Now"
+            }
+        }
     }
 }

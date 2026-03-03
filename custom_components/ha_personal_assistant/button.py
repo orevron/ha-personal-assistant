@@ -1,67 +1,62 @@
-"""Sync Now button entity for triggering immediate RAG re-indexing."""
+"""Button entities for the Personal Assistant integration.
+
+Provides a Sync Now button that triggers immediate RAG re-indexing.
+Registered as a proper HA platform via async_setup_entry.
+"""
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
 
-async def async_setup_sync_button(hass: HomeAssistant, entry: ConfigEntry, rag_indexer) -> None:
-    """Set up the sync button entity."""
-    button = SyncNowButton(entry, rag_indexer)
+def _device_info(entry: ConfigEntry) -> dict[str, Any]:
+    """Shared device info — must match sensor.py so entities group together."""
+    return {
+        "identifiers": {(DOMAIN, entry.entry_id)},
+        "name": "Personal Assistant",
+        "manufacturer": "HA Personal Assistant",
+        "model": "AI Agent",
+        "sw_version": "0.1.7",
+        "entry_type": None,
+    }
 
-    # Register the entity through the entity component
-    hass.data.setdefault(DOMAIN, {})
-    if "buttons" not in hass.data[DOMAIN]:
-        hass.data[DOMAIN]["buttons"] = []
-    hass.data[DOMAIN]["buttons"].append(button)
 
-    # Use the entity platform to add the button
-    from homeassistant.helpers.entity_platform import async_get_platforms
-
-    # Register via entity component
-    hass.states.async_set(
-        "button.ha_personal_assistant_sync_now",
-        "unknown",
-        {
-            "friendly_name": "Personal Assistant: Sync Now",
-            "icon": "mdi:sync",
-        },
-    )
-
-    # Listen for button press events
-    async def handle_button_press(event):
-        """Handle button press."""
-        entity_id = event.data.get("entity_id")
-        if entity_id == "button.ha_personal_assistant_sync_now":
-            await button.async_press()
-
-    hass.bus.async_listen("button.press", handle_button_press)
-
-    # Also register as a service for easy triggering
-    async def handle_sync_service(call):
-        """Handle sync service call."""
-        await button.async_press()
-
-    _LOGGER.info("Sync Now button registered")
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up the button platform from a config entry."""
+    rag_indexer = hass.data[DOMAIN][entry.entry_id]["rag_indexer"]
+    async_add_entities([SyncNowButton(entry, rag_indexer)])
 
 
 class SyncNowButton(ButtonEntity):
     """Button entity that triggers an immediate RAG re-index."""
 
+    _attr_has_entity_name = True
+
     def __init__(self, entry: ConfigEntry, rag_indexer) -> None:
         """Initialize the button."""
         self._entry = entry
         self._rag_indexer = rag_indexer
-        self._attr_name = "Personal Assistant: Sync Now"
+        self._attr_name = "Sync Now"
         self._attr_unique_id = f"{DOMAIN}_sync_now"
         self._attr_icon = "mdi:sync"
+
+    @property
+    def device_info(self) -> dict[str, Any]:
+        """Return device info so this button appears on the PA device."""
+        return _device_info(self._entry)
 
     async def async_press(self) -> None:
         """Handle the button press — trigger full re-index."""
