@@ -51,8 +51,8 @@ jobs:
 
       - name: Create release zip
         run: |
-          cd custom_components
-          zip -r ../ha_personal_assistant.zip ha_personal_assistant/
+          cd custom_components/ha_personal_assistant
+          zip -r ../../ha_personal_assistant.zip .
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
