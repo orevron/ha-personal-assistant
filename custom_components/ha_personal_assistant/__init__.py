@@ -39,10 +39,9 @@ from .const import (
     RAG_REINDEX_INTERVAL_HOURS,
     RAG_HISTORY_REINDEX_INTERVAL_HOURS,
 )
-from .agent.router import LLMRouter
-from .agent.graph import PersonalAssistantAgent
-from .agent.context_assembler import ContextAssembler, ContextBudget
-from .tools.action_policy import ActionPolicy
+# NOTE: Heavy imports (langchain, langgraph, sqlalchemy, etc.) are deferred to
+# async_setup_entry() so that the config flow can load before HA installs
+# the packages listed in manifest.json requirements.
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -55,6 +54,13 @@ _AGENT_POOL = ThreadPoolExecutor(
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Personal Assistant from a config entry."""
+    # Deferred imports — these depend on packages from manifest.json requirements
+    # which are installed by HA after the config entry is created via config flow.
+    from .agent.router import LLMRouter
+    from .agent.graph import PersonalAssistantAgent
+    from .agent.context_assembler import ContextAssembler, ContextBudget
+    from .tools.action_policy import ActionPolicy
+
     config = {**entry.data, **entry.options}
 
     # Create data directory
