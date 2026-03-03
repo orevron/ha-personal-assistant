@@ -31,12 +31,14 @@ class LLMRouter:
     Exposes a LangChain BaseChatModel with async support.
     """
 
-    def __init__(self, config: dict[str, Any]) -> None:
+    def __init__(self, hass: Any, config: dict[str, Any]) -> None:
         """Initialize the router with config data.
 
         Args:
+            hass: Home Assistant instance.
             config: Config entry data dict.
         """
+        self._hass = hass
         self._config = config
         self._primary_provider = None
         self._fallback_provider = None
@@ -46,15 +48,18 @@ class LLMRouter:
 
     async def async_setup(self) -> None:
         """Set up LLM providers."""
-        from ..llm.ollama_provider import OllamaProvider
-
         # Primary: Ollama
         ollama_url = self._config.get(CONF_OLLAMA_URL, DEFAULT_OLLAMA_URL)
         ollama_model = self._config.get(CONF_OLLAMA_MODEL, DEFAULT_OLLAMA_MODEL)
 
-        self._primary_provider = OllamaProvider(
-            base_url=ollama_url,
-            model=ollama_model,
+        # Run in executor — langchain_ollama import triggers a blocking
+        # SSL load_verify_locations call that must not run in the event loop.
+        def _create_ollama_provider():
+            from ..llm.ollama_provider import OllamaProvider
+            return OllamaProvider(base_url=ollama_url, model=ollama_model)
+
+        self._primary_provider = await self._hass.async_add_executor_job(
+            _create_ollama_provider,
         )
         self._primary_llm = self._primary_provider.llm
 

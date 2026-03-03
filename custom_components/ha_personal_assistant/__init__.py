@@ -73,7 +73,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _LOGGER.info("Setting up Personal Assistant integration")
 
     # 1. LLM Router
-    llm_router = LLMRouter(config)
+    llm_router = LLMRouter(hass, config)
     await llm_router.async_setup()
 
     # 2. Action Policy

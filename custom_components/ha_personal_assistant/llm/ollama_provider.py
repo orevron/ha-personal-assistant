@@ -4,8 +4,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from langchain_ollama import ChatOllama
-
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -20,6 +18,8 @@ class OllamaProvider:
             model: Model name to use.
             **kwargs: Additional kwargs passed to ChatOllama.
         """
+        from langchain_ollama import ChatOllama
+
         self._base_url = base_url
         self._model = model
         self._llm = ChatOllama(
@@ -29,7 +29,7 @@ class OllamaProvider:
         )
 
     @property
-    def llm(self) -> ChatOllama:
+    def llm(self) -> Any:
         """Return the underlying ChatOllama instance."""
         return self._llm
 
