@@ -5,6 +5,12 @@ import json
 import logging
 from typing import Any
 
+from homeassistant.helpers import (
+    area_registry as ar,
+    device_registry as dr,
+    entity_registry as er,
+)
+
 from langchain_core.tools import tool
 
 from .action_policy import ActionPolicy, ActionDecision
@@ -40,9 +46,9 @@ def create_ha_tools(hass: Any, action_policy: ActionPolicy) -> list:
             JSON mapping of {friendly_name: entity_id}.
         """
         try:
-            area_registry = hass.helpers.area_registry.async_get()
-            entity_registry = hass.helpers.entity_registry.async_get()
-            device_registry = hass.helpers.device_registry.async_get()
+            area_registry = ar.async_get(hass)
+            entity_registry = er.async_get(hass)
+            device_registry = dr.async_get(hass)
 
             # Build area ID lookup
             area_id_lookup: dict[str, str] = {}

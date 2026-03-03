@@ -5,6 +5,12 @@ import json
 import logging
 from typing import Any
 
+from homeassistant.helpers import (
+    area_registry as ar,
+    device_registry as dr,
+    entity_registry as er,
+)
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -63,9 +69,9 @@ class RAGIndexer:
         await self._rag_engine.aclear_source_type("entity")
 
         count = 0
-        entity_registry = self._hass.helpers.entity_registry.async_get()
-        area_registry = self._hass.helpers.area_registry.async_get()
-        device_registry = self._hass.helpers.device_registry.async_get()
+        entity_registry = er.async_get(self._hass)
+        area_registry = ar.async_get(self._hass)
+        device_registry = dr.async_get(self._hass)
 
         # Build area name lookup
         area_names: dict[str, str] = {}
