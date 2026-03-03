@@ -63,7 +63,10 @@ class PersonalAssistantAgent:
 
     async def async_setup(self) -> None:
         """Build the LangGraph agent graph."""
-        self._checkpointer = AsyncSqliteSaver.from_conn_string(self._checkpointer_db_path)
+        # from_conn_string returns an async context manager in newer versions;
+        # we manually enter it and store the reference for cleanup on unload.
+        self._checkpointer_cm = AsyncSqliteSaver.from_conn_string(self._checkpointer_db_path)
+        self._checkpointer = await self._checkpointer_cm.__aenter__()
         await self._checkpointer.setup()
 
         llm = self._llm_router.get_llm()
@@ -240,8 +243,8 @@ class PersonalAssistantAgent:
 
     async def async_close(self) -> None:
         """Clean up resources."""
-        if self._checkpointer:
+        if hasattr(self, '_checkpointer_cm') and self._checkpointer_cm:
             try:
-                await self._checkpointer.conn.close()
+                await self._checkpointer_cm.__aexit__(None, None, None)
             except Exception:
                 pass
