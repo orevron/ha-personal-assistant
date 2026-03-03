@@ -1,8 +1,9 @@
-"""RAG Engine — vector search using sqlite-vec for retrieval-augmented generation."""
+"""RAG Engine — vector search with sqlite-vec (if available) or pure-Python fallback."""
 from __future__ import annotations
 
 import json
 import logging
+import math
 import sqlite3
 import struct
 from concurrent.futures import ThreadPoolExecutor
@@ -10,10 +11,33 @@ from typing import Any
 
 _LOGGER = logging.getLogger(__name__)
 
+# Detect sqlite-vec availability at import time
+_HAS_SQLITE_VEC = False
+try:
+    import sqlite_vec  # noqa: F401
+    _HAS_SQLITE_VEC = True
+except ImportError:
+    _LOGGER.info("sqlite-vec not available; using pure-Python cosine similarity fallback")
+
 
 def _serialize_embedding(embedding: list[float]) -> bytes:
     """Serialize a list of floats to bytes for sqlite-vec."""
     return struct.pack(f"{len(embedding)}f", *embedding)
+
+
+def _deserialize_embedding(data: bytes, dim: int) -> list[float]:
+    """Deserialize bytes back to a list of floats."""
+    return list(struct.unpack(f"{dim}f", data))
+
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    """Compute cosine similarity between two vectors."""
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(x * x for x in b))
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
 
 
 class RAGEngine:
@@ -22,6 +46,9 @@ class RAGEngine:
     Uses a single SQLite database with the sqlite-vec extension for
     both vector storage and metadata. Supports cosine similarity search
     via KNN queries.
+
+    Falls back to a pure-Python cosine similarity search when sqlite-vec
+    is not available (e.g., in HAOS Docker environments).
     """
 
     def __init__(
@@ -41,6 +68,7 @@ class RAGEngine:
         self._embeddings = embeddings_provider
         self._executor = executor
         self._conn: sqlite3.Connection | None = None
+        self._use_vec: bool = False
 
     async def async_setup(self) -> None:
         """Initialize the sqlite-vec tables."""
@@ -53,15 +81,17 @@ class RAGEngine:
         """Synchronous database setup."""
         self._conn = sqlite3.connect(self._db_path)
 
-        # Load sqlite-vec extension
-        try:
-            import sqlite_vec
-            self._conn.enable_load_extension(True)
-            sqlite_vec.load(self._conn)
-            self._conn.enable_load_extension(False)
-        except Exception as err:
-            _LOGGER.error("Failed to load sqlite-vec extension: %s", err)
-            raise
+        # Try loading sqlite-vec extension
+        if _HAS_SQLITE_VEC:
+            try:
+                self._conn.enable_load_extension(True)
+                sqlite_vec.load(self._conn)
+                self._conn.enable_load_extension(False)
+                self._use_vec = True
+                _LOGGER.info("sqlite-vec extension loaded successfully")
+            except Exception as err:
+                _LOGGER.warning("Failed to load sqlite-vec extension, using fallback: %s", err)
+                self._use_vec = False
 
         cursor = self._conn.cursor()
 
@@ -78,19 +108,29 @@ class RAGEngine:
             )
         """)
 
-        # Create virtual table for vector search
-        # Dimension will be set based on the embedding model
         dimension = self._embeddings.dimension
-        cursor.execute(f"""
-            CREATE VIRTUAL TABLE IF NOT EXISTS rag_vectors
-            USING vec0(
-                document_id INTEGER PRIMARY KEY,
-                embedding float[{dimension}]
-            )
-        """)
+
+        if self._use_vec:
+            # Use sqlite-vec virtual table for vector search
+            cursor.execute(f"""
+                CREATE VIRTUAL TABLE IF NOT EXISTS rag_vectors
+                USING vec0(
+                    document_id INTEGER PRIMARY KEY,
+                    embedding float[{dimension}]
+                )
+            """)
+        else:
+            # Fallback: store embeddings as BLOBs in a regular table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS rag_vectors (
+                    document_id INTEGER PRIMARY KEY,
+                    embedding BLOB NOT NULL
+                )
+            """)
 
         self._conn.commit()
-        _LOGGER.info("RAG engine initialized with sqlite-vec (dimension=%d)", dimension)
+        mode = "sqlite-vec" if self._use_vec else "pure-Python fallback"
+        _LOGGER.info("RAG engine initialized with %s (dimension=%d)", mode, dimension)
 
     async def ainsert(
         self,
@@ -196,14 +236,25 @@ class RAGEngine:
         top_k: int,
         source_type: str | None,
     ) -> list[dict[str, Any]]:
-        """Synchronous retrieval using KNN search."""
+        """Synchronous retrieval using KNN search or fallback."""
         if not self._conn:
             return []
 
+        if self._use_vec:
+            return self._retrieve_vec(query_embedding, top_k, source_type)
+        else:
+            return self._retrieve_fallback(query_embedding, top_k, source_type)
+
+    def _retrieve_vec(
+        self,
+        query_embedding: list[float],
+        top_k: int,
+        source_type: str | None,
+    ) -> list[dict[str, Any]]:
+        """Retrieve using sqlite-vec KNN search."""
         try:
             cursor = self._conn.cursor()
 
-            # KNN search using sqlite-vec
             if source_type:
                 cursor.execute(
                     """
@@ -230,8 +281,56 @@ class RAGEngine:
                     (_serialize_embedding(query_embedding), top_k),
                 )
 
-            results = []
+            return self._parse_results(cursor.fetchall())
+        except Exception as err:
+            _LOGGER.error("Error during sqlite-vec retrieval: %s", err)
+            return []
+
+    def _retrieve_fallback(
+        self,
+        query_embedding: list[float],
+        top_k: int,
+        source_type: str | None,
+    ) -> list[dict[str, Any]]:
+        """Retrieve using pure-Python cosine similarity (fallback)."""
+        try:
+            cursor = self._conn.cursor()
+            dim = self._embeddings.dimension
+
+            if source_type:
+                cursor.execute(
+                    """
+                    SELECT d.id, d.source, d.source_type, d.content, d.metadata, v.embedding
+                    FROM rag_vectors v
+                    JOIN rag_documents d ON d.id = v.document_id
+                    WHERE d.source_type = ?
+                    """,
+                    (source_type,),
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT d.id, d.source, d.source_type, d.content, d.metadata, v.embedding
+                    FROM rag_vectors v
+                    JOIN rag_documents d ON d.id = v.document_id
+                    """,
+                )
+
+            # Compute cosine similarity for each row
+            scored = []
             for row in cursor.fetchall():
+                stored_emb = _deserialize_embedding(row[5], dim)
+                sim = _cosine_similarity(query_embedding, stored_emb)
+                # Convert similarity to distance (lower = more similar)
+                distance = 1.0 - sim
+                scored.append((distance, row[:5]))
+
+            # Sort by distance (ascending) and take top_k
+            scored.sort(key=lambda x: x[0])
+            top_results = scored[:top_k]
+
+            results = []
+            for distance, row in top_results:
                 metadata = {}
                 try:
                     metadata = json.loads(row[4]) if row[4] else {}
@@ -244,13 +343,34 @@ class RAGEngine:
                     "source_type": row[2],
                     "content": row[3],
                     "metadata": {**metadata, "source": row[1], "source_type": row[2]},
-                    "distance": row[5],
+                    "distance": distance,
                 })
 
             return results
         except Exception as err:
-            _LOGGER.error("Error during RAG retrieval: %s", err)
+            _LOGGER.error("Error during fallback retrieval: %s", err)
             return []
+
+    @staticmethod
+    def _parse_results(rows: list) -> list[dict[str, Any]]:
+        """Parse query result rows into result dicts."""
+        results = []
+        for row in rows:
+            metadata = {}
+            try:
+                metadata = json.loads(row[4]) if row[4] else {}
+            except json.JSONDecodeError:
+                pass
+
+            results.append({
+                "id": row[0],
+                "source": row[1],
+                "source_type": row[2],
+                "content": row[3],
+                "metadata": {**metadata, "source": row[1], "source_type": row[2]},
+                "distance": row[5],
+            })
+        return results
 
     async def aclear_source_type(self, source_type: str) -> None:
         """Clear all documents of a specific source type.
